@@ -1,0 +1,26 @@
+#include "init_lora.h"
+#include "lorawan.h"
+
+void setup() {
+  Serial.begin(9600);
+  while (!Serial);
+
+  setupLoRa();
+}
+
+void loop() {
+  SosPayload payload;
+
+  payload.timestamp = now(); // RTC or UNIX time
+  strncpy(payload.deviceId, "AB12C3", 6);
+  payload.sosFlag = 1;
+  payload.sosReason = 1; // IMU Trigger
+  payload.tilt = int16_t(18.23 * 100);
+  payload.vibration = int16_t(3.45 * 100);
+  payload.batteryPercent = 82;
+  payload.retryCount = 0;
+
+  sendLoRaPayload(payload);
+
+  delay(60000); // Send every 1 minute
+}
