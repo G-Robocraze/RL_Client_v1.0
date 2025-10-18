@@ -6,11 +6,11 @@
 #define DEVICE_ID "RL15C3" // Change per device
 
 // LoRaWAN Credentials (replace with actual values)
-#define LORA_REGION EU868
+#define LORA_REGION IN865
 #define LORA_EUI "0004A30B001C0530"
-const char LORA_APP_EUI[] = "0000000000000000";
-const char LORA_APP_KEY[] = "00000000000000000000000000000000";
-const char LORA_DEV_EUI[] = "0000000000000000";
+const char LORA_APP_EUI[] = "be7d8b422668287a";
+const char LORA_APP_KEY[] = "cbf941503c0a56929b340824940a3534";
+const char LORA_DEV_EUI[] = "a8610a343345800d";
 
 // Pin Assignments
 #define LED_PIN 5

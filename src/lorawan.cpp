@@ -5,7 +5,6 @@
 
 LoRaModem modem;
 
-#define LORA_REGION EU868
 static char currentEUI[24] = LORA_EUI;
 static unsigned long sendInterval = DEFAULT_SEND_INTERVAL_MS;
 bool panicFlag = false;
