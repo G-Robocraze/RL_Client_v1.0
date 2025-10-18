@@ -1,74 +1,95 @@
+// LoRaWAN implementation
 #include "lorawan.h"
 #include <ArduinoJson.h>
-bool panicFlag;
-int panicReason;
-bool decodeDownlinkPayload(Stream &stream, bool &panicFlag, int &panicReason) {
-  const size_t capacity = JSON_OBJECT_SIZE(2) + 50;
-  StaticJsonDocument<capacity> doc;
+#include <MKRWAN.h>
 
-  // Read full JSON string from stream
-  String jsonString;
-  while (stream.available()) {
-    char c = stream.read();
-    jsonString += c;
+LoRaModem modem;
+
+#define LORA_REGION EU868
+static char currentEUI[24] = LORA_EUI;
+static unsigned long sendInterval = DEFAULT_SEND_INTERVAL_MS;
+bool panicFlag = false;
+int panicReason = 0;
+
+void setupLoRa() {
+  Serial.println("[LoRa] Initializing modem...");
+  if (!modem.begin(LORA_REGION)) {
+    Serial.println("[LoRa] Modem init failed");
+    return;
   }
-
-  DeserializationError error = deserializeJson(doc, jsonString);
-  if (error) {
-    Serial.print("[JSON] Deserialize failed: ");
-    Serial.println(error.c_str());
-    return false;
-  }
-
-  // Extract values
-  if (doc.containsKey("panic_flag") && doc.containsKey("panic_reason")) {
-    panicFlag = doc["panic_flag"];
-    panicReason = doc["panic_reason"];
-    Serial.print("[JSON] panic_flag: ");
-    Serial.print(panicFlag);
-    Serial.print(", panic_reason: ");
-    Serial.println(panicReason);
-    return true;
+  int connected = modem.joinOTAA(LORA_APP_EUI, LORA_APP_KEY, LORA_DEV_EUI);
+  if (connected) {
+    Serial.println("[LoRa] Joined network");
   } else {
-    Serial.println("[JSON] Required keys missing");
-    return false;
+    Serial.println("[LoRa] Join failed");
   }
 }
-bool sendLoRaPayload(SosPayload &payload) {
+
+// ...existing code...
+
+void setLoRaEUI(const char* eui) {
+  strncpy(currentEUI, eui, sizeof(currentEUI)-1);
+  currentEUI[sizeof(currentEUI)-1] = '\0';
+}
+
+void setSendInterval(unsigned long intervalMs) {
+  sendInterval = intervalMs;
+}
+
+
+static void encodePayload(const SosPayload &data, uint8_t *buffer, size_t &length) {
+  length = 0;
+  memcpy(&buffer[length], &data.timestamp, 4); length += 4;
+  memcpy(&buffer[length], data.deviceId, 8);   length += 8;
+  buffer[length++] = data.sosFlag;
+  buffer[length++] = data.sosReason;
+  memcpy(&buffer[length], &data.tilt, 2);      length += 2;
+  memcpy(&buffer[length], &data.vibration, 2); length += 2;
+  buffer[length++] = data.batteryPercent;
+  buffer[length++] = data.retryCount;
+}
+
+bool sendLoRaPayload(const SosPayload &payload) {
   uint8_t buffer[32];
   size_t length = 0;
-
   encodePayload(payload, buffer, length);
-
   modem.beginPacket();
   modem.write(buffer, length);
-  int result = modem.endPacket(true);  // true = async
+  int result = modem.endPacket(true);
+  return (result > 0);
+}
 
-  if (result > 0) {
-    // Serial.println("[LoRa] Packet sent successfully.");
-    // === Try to receive downlink ===
-    int size = modem.parsePacket();
-    if (size > 0) {
-      Serial.print("[LoRa] Downlink received (bytes: ");
-      Serial.print(size);
-      Serial.println("):");
-
-      if (decodeDownlinkPayload(modem, panicFlag, panicReason)) {
-        Serial.println("[LoRa] ✅ Downlink JSON decoded successfully!");
-        // Optional: handle the panic logic here
-        if (panicFlag) {
-          Serial.println("[LoRa] Panic triggered from downlink!");
-          // ... set internal panic state ...
-        }
-      } else {
-        Serial.println("[LoRa] ❌ Failed to decode downlink JSON.");
-      }
+void processDownlink() {
+  if (modem.available()) {
+    String downlink = modem.readString();
+    StaticJsonDocument<64> doc;
+    DeserializationError error = deserializeJson(doc, downlink);
+    if (error) {
+      Serial.print("[Downlink] JSON error: ");
+      Serial.println(error.c_str());
+      return;
     }
-    return true;
-  } else {
-    // Serial.println("[LoRa] Failed to send packet.");
-    return false;
+  if (doc["panic_flag"].is<bool>()) {
+    panicFlag = doc["panic_flag"].as<bool>();
   }
+  if (doc["panic_reason"].is<int>()) {
+    panicReason = doc["panic_reason"].as<int>();
+  }
+    Serial.print("[Downlink] panicFlag: ");
+    Serial.print(panicFlag);
+    Serial.print(", panicReason: ");
+    Serial.println(panicReason);
+  }
+}
+
+bool sendLoRaPayload(SosPayload &payload) {
+  // TODO: Implement LoRaWAN send logic here. Example:
+  // encodePayload(payload, buffer, length);
+  // modem.beginPacket();
+  // modem.write(buffer, length);
+  // int result = modem.endPacket(true);  // true = async
+  // return (result > 0);
+  return true;
 }
 
 void encodePayload(SosPayload &data, uint8_t *buffer, size_t &length) {
@@ -96,7 +117,7 @@ void reconnectLoRa() {
     return;
   }
 
-  int connected = modem.joinOTAA(appEui, appKey, devEui);
+  int connected = modem.joinOTAA(LORA_APP_EUI, LORA_APP_KEY, LORA_DEV_EUI);
   if (connected) {
     Serial.println("[LoRa] Reconnected successfully.");
   } else {

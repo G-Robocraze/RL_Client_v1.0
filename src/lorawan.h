@@ -1,29 +1,32 @@
+
 #ifndef LORAWAN_H
 #define LORAWAN_H
 
 #include <Arduino.h>
-#include <MKRWAN.h>
-#include "init_lora.h"
+#include "config.h"
 
 extern bool panicFlag;
 extern int panicReason;
-// Data structure for SOS Payload
+
 struct SosPayload {
-  uint32_t timestamp;        // 4 bytes
-  char deviceId[6];          // 6 bytes
-  uint8_t sosFlag;           // 1 byte
-  uint8_t sosReason;         // 1 byte
-  int16_t tilt;              // 2 bytes (×100)
-  int16_t vibration;         // 2 bytes (×100)
-  uint8_t batteryPercent;    // 1 byte
-  uint8_t retryCount;        // 1 byte
+    unsigned long timestamp;
+    char deviceId[8];
+    int sosFlag;
+    int sosReason;
+    int tilt;
+    int vibration;
+    int batteryPercent;
+    int retryCount;
 };
 
-// Function to send binary payload over LoRaWAN
-bool sendLoRaPayload(SosPayload &payload);
-
-// (Optional) Utility: encode to byte array
-void encodePayload(SosPayload &data, uint8_t *buffer, size_t &length);
+void setupLoRa();
 bool isLoRaConnected();
 void reconnectLoRa();
+bool sendLoRaPayload(const SosPayload &payload);
+void setLoRaEUI(const char* eui);
+void setSendInterval(unsigned long intervalMs);
+void processDownlink();
+
+
+
 #endif // LORAWAN_H
