@@ -9,6 +9,7 @@ static char currentEUI[24] = LORA_EUI;
 static unsigned long sendInterval = DEFAULT_SEND_INTERVAL_MS;
 bool panicFlag = false;
 int panicReason = 0;
+bool downlinkUpdated = false;
 
 void setupLoRa() {
   Serial.println("[LoRa] Initializing modem...");
@@ -52,15 +53,51 @@ bool sendLoRaPayload(const SosPayload &payload) {
   uint8_t buffer[32];
   size_t length = 0;
   encodePayload(payload, buffer, length);
+  modem.poll();
+  if (!modem.available()) {
+    Serial.println("[LoRa] No pending downlink before uplink.");
+  }
   modem.beginPacket();
   modem.write(buffer, length);
   int result = modem.endPacket(true);
-  return (result > 0);
+  if (result <= 0) {
+    Serial.print("[LoRa] Uplink failed, error code ");
+    Serial.println(result);
+    return false;
+  }
+  Serial.print("[LoRa] Uplink sent (bytes=");
+  Serial.print(length);
+  Serial.println(")");
+  modem.poll();
+  return true;
 }
 
 void processDownlink() {
-  if (modem.available()) {
-    String downlink = modem.readString();
+  modem.poll();
+  int availableBytes = modem.available();
+  if (availableBytes > 0) {
+    Serial.print("[Downlink] Bytes available: ");
+    Serial.println(availableBytes);
+    String downlink;
+    downlink.reserve(availableBytes + 1);
+    size_t readCount = 0;
+    unsigned long deadline = millis() + 100;
+    while (millis() <= deadline) {
+      while (modem.available()) {
+        char c = static_cast<char>(modem.read());
+        downlink += c;
+        readCount++;
+        deadline = millis() + 20; // extend slightly when data keeps arriving
+      }
+    }
+    Serial.print("[Downlink] Read bytes: ");
+    Serial.println(readCount);
+    Serial.print("[Downlink] Raw payload: ");
+    Serial.println(downlink);
+    if (downlink.length() == 0) {
+      Serial.println("[Downlink] No data read from modem buffer.");
+      return;
+    }
     StaticJsonDocument<64> doc;
     DeserializationError error = deserializeJson(doc, downlink);
     if (error) {
@@ -68,42 +105,36 @@ void processDownlink() {
       Serial.println(error.c_str());
       return;
     }
-  if (doc["panic_flag"].is<bool>()) {
-    panicFlag = doc["panic_flag"].as<bool>();
-  }
-  if (doc["panic_reason"].is<int>()) {
-    panicReason = doc["panic_reason"].as<int>();
-  }
-    Serial.print("[Downlink] panicFlag: ");
+    bool previousFlag = panicFlag;
+    int previousReason = panicReason;
+
+    JsonVariant flagVar = doc["panic_flag"];
+    if (!flagVar.isNull()) {
+      int flagInt = flagVar.as<int>();
+      panicFlag = (flagInt != 0);
+    } else {
+      Serial.println("[Downlink] Missing panic_flag key.");
+    }
+
+    JsonVariant reasonVar = doc["panic_reason"];
+    if (!reasonVar.isNull()) {
+      panicReason = reasonVar.as<int>();
+    } else {
+      Serial.println("[Downlink] Missing panic_reason key.");
+    }
+
+    Serial.print("[Downlink] Parsed flag: ");
     Serial.print(panicFlag);
-    Serial.print(", panicReason: ");
-    Serial.println(panicReason);
+    Serial.print(" (prev ");
+    Serial.print(previousFlag);
+    Serial.print("), reason: ");
+    Serial.print(panicReason);
+    Serial.print(" (prev ");
+    Serial.print(previousReason);
+    Serial.println(")");
+    downlinkUpdated = true;
   }
 }
-
-bool sendLoRaPayload(SosPayload &payload) {
-  // TODO: Implement LoRaWAN send logic here. Example:
-  // encodePayload(payload, buffer, length);
-  // modem.beginPacket();
-  // modem.write(buffer, length);
-  // int result = modem.endPacket(true);  // true = async
-  // return (result > 0);
-  return true;
-}
-
-void encodePayload(SosPayload &data, uint8_t *buffer, size_t &length) {
-  length = 0;
-
-  memcpy(&buffer[length], &data.timestamp, 4); length += 4;
-  memcpy(&buffer[length], data.deviceId, 6);   length += 6;
-  buffer[length++] = data.sosFlag;
-  buffer[length++] = data.sosReason;
-  memcpy(&buffer[length], &data.tilt, 2);      length += 2;
-  memcpy(&buffer[length], &data.vibration, 2); length += 2;
-  buffer[length++] = data.batteryPercent;
-  buffer[length++] = data.retryCount;
-}
-
 
 bool isLoRaConnected() {
   return modem.connected(); // true if joined to network

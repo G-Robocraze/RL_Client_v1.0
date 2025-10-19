@@ -2,9 +2,7 @@
 #include <Arduino.h>
 #include "config.h"
 
-// Forward declarations
-bool isAnyPanic();
-void checkIMUPanic();
+void applyLoRaDownlink(bool flag, int reason);
 #include "lorawan.h"
 #include "battery.h"
 #include "imu.h"
@@ -19,6 +17,13 @@ unsigned long lastSendTime = 0;
 SirenMode currentSirenMode = SIREN_OFF;
 unsigned long lastSirenToggleTime = 0;
 bool sirenState = false;
+bool lastDownlinkPanicFlag = false;
+int lastDownlinkPanicReason = 0;
+PanicState lastLoggedState = PANIC_NONE;
+PanicSource lastLoggedSource = PANIC_SOURCE_NONE;
+bool inputsSuppressed = false;
+bool forceImmediateSend = false;
+bool downlinkHoldoffActive = false;
 
 void setup() {
     pinMode(SIREN_PIN, OUTPUT);
@@ -42,17 +47,54 @@ void setup() {
 void loop() {
     unsigned long currentTime = millis();
 
+    processDownlink();
+    bool downlinkEvent = downlinkUpdated || panicFlag != lastDownlinkPanicFlag || panicReason != lastDownlinkPanicReason;
+    if (downlinkEvent) {
+        Serial.print("[Main] Downlink change detected: flag=");
+        Serial.print(panicFlag);
+        Serial.print(", reason=");
+        Serial.println(panicReason);
+        applyLoRaDownlink(panicFlag, panicReason);
+        lastDownlinkPanicFlag = panicFlag;
+        lastDownlinkPanicReason = panicReason;
+        downlinkUpdated = false;
+        forceImmediateSend = true;
+        Serial.println("[Main] Forcing immediate uplink to report downlink state.");
+    }
+
+    if (downlinkHoldoffActive) {
+        bool sensorsCleared = !isPanicPressed() && !crashDetected;
+        if (sensorsCleared) {
+            downlinkHoldoffActive = false;
+            panicStatus.source = PANIC_SOURCE_NONE;
+            panicStatus.state = PANIC_NONE;
+            panicStatus.reason = 0;
+            Serial.println("[Main] Downlink hold-off released; local inputs restored.");
+        }
+    }
+
     // Check panic sources
-    if (isPanicPressed()) {
-        panicStatus.source = PANIC_SOURCE_BUTTON;
-        panicStatus.state = PANIC_TRIGGERED;
-        panicStatus.reason = 1;
-        panicStartTime = currentTime;
-  } else if (crashDetected) {
-    panicStatus.source = PANIC_SOURCE_IMU;
-    panicStatus.state = PANIC_TRIGGERED;
-    panicStatus.reason = 2;
-    panicStartTime = currentTime;
+    if (panicStatus.source != PANIC_SOURCE_LORAWAN && !downlinkHoldoffActive) {
+        if (inputsSuppressed) {
+            Serial.println("[Main] Local inputs re-enabled (LoRaWAN override cleared).");
+            inputsSuppressed = false;
+        }
+        if (isPanicPressed()) {
+            panicStatus.source = PANIC_SOURCE_BUTTON;
+            panicStatus.state = PANIC_TRIGGERED;
+            panicStatus.reason = 1;
+            panicStartTime = currentTime;
+            Serial.println("[Main] Panic button pressed, entering TRIGGERED state.");
+        } else if (crashDetected) {
+            panicStatus.source = PANIC_SOURCE_IMU;
+            panicStatus.state = PANIC_TRIGGERED;
+            panicStatus.reason = 2;
+            panicStartTime = currentTime;
+            Serial.println("[Main] IMU crash detected, entering TRIGGERED state.");
+        }
+    } else if (!inputsSuppressed) {
+        Serial.println("[Main] Local inputs suppressed due to LoRaWAN override/hold-off.");
+        inputsSuppressed = true;
     }
 
     // Escalation logic
@@ -73,8 +115,25 @@ void loop() {
     }
     updateSiren();
 
+    if (panicStatus.state != lastLoggedState || panicStatus.source != lastLoggedSource) {
+        Serial.print("[Main] Panic state updated: state=");
+        Serial.print(panicStatus.state);
+        Serial.print(", source=");
+        Serial.print(panicStatus.source);
+        Serial.print(", reason=");
+        Serial.println(panicStatus.reason);
+        unsigned long intervalMs = (panicStatus.state != PANIC_NONE) ? PANIC_SEND_INTERVAL_MS : DEFAULT_SEND_INTERVAL_MS;
+        Serial.print("[Main] Uplink interval set to ");
+        Serial.print(intervalMs / 1000);
+        Serial.println("s");
+        lastLoggedState = panicStatus.state;
+        lastLoggedSource = panicStatus.source;
+    }
+
+    unsigned long targetSendInterval = (panicStatus.state != PANIC_NONE) ? PANIC_SEND_INTERVAL_MS : DEFAULT_SEND_INTERVAL_MS;
+
     // LoRaWAN send
-    if (currentTime - lastSendTime >= DEFAULT_SEND_INTERVAL_MS) {
+    if (forceImmediateSend || (currentTime - lastSendTime >= targetSendInterval)) {
         if (!isLoRaConnected()) reconnectLoRa();
         lastSendTime = currentTime;
         float voltage = readBatteryVoltage();
@@ -91,13 +150,13 @@ void loop() {
         payload.retryCount = 0;
 
         sendLoRaPayload(payload);
+        forceImmediateSend = false;
     }
 
     updateIMU();
     delay(100);
 }
 
-bool isAnyPanic();
 void checkIMUPanic() {
   if (panicStatus.source == PANIC_SOURCE_LORAWAN) return;  // LoRaWAN override
 
@@ -139,12 +198,14 @@ void applyLoRaDownlink(bool flag, int reason) {
     panicStatus.source = PANIC_SOURCE_LORAWAN;
     panicStatus.state = PANIC_ESCALATED;
     panicStatus.reason = reason;
+    panicStartTime = millis();
+    downlinkHoldoffActive = false;
     Serial.println("[LORAWAN PANIC] External panic override triggered!");
-  } else if (panicStatus.source == PANIC_SOURCE_LORAWAN) {
-    // Only override if current panic is from LoRaWAN
-    panicStatus.source = PANIC_SOURCE_NONE;
+  } else {
+    panicStatus.source = PANIC_SOURCE_LORAWAN;
     panicStatus.state = PANIC_NONE;
     panicStatus.reason = 0;
-    Serial.println("[LORAWAN PANIC] External override cleared panic.");
+    downlinkHoldoffActive = true;
+    Serial.println("[LORAWAN PANIC] External override cleared panic (hold-off active until sensors reset).");
   }
 }

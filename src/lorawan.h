@@ -7,6 +7,7 @@
 
 extern bool panicFlag;
 extern int panicReason;
+extern bool downlinkUpdated;
 
 struct SosPayload {
     unsigned long timestamp;

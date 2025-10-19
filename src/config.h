@@ -3,14 +3,14 @@
 #define CONFIG_H
 
 // Device Info
-#define DEVICE_ID "RL15C3" // Change per device
+#define DEVICE_ID "RL15C2" // Change per device
 
 // LoRaWAN Credentials (replace with actual values)
 #define LORA_REGION IN865
 #define LORA_EUI "0004A30B001C0530"
 const char LORA_APP_EUI[] = "be7d8b422668287a";
 const char LORA_APP_KEY[] = "cbf941503c0a56929b340824940a3534";
-const char LORA_DEV_EUI[] = "a8610a343345800d";
+const char LORA_DEV_EUI[] = "a8610a33381c8211";
 
 // Pin Assignments
 #define LED_PIN 5
@@ -23,6 +23,7 @@ const char LORA_DEV_EUI[] = "a8610a343345800d";
 
 // Timing Constants
 #define DEFAULT_SEND_INTERVAL_MS 30000UL
+#define PANIC_SEND_INTERVAL_MS 10000UL
 #define PANIC_LEVEL_1_TIME_MS 3000
 #define PANIC_LEVEL_2_TIME_MS 10000
 #define DEESCALATE_PATTERN_MAX_TIME_MS 10000
